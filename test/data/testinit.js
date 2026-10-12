@@ -292,26 +292,41 @@ this.loadTests = function() {
 
 		// Ensure load order (to preserve test numbers)
 		(function loadDep() {
-			var dep = tests.shift();
+			var startSuite,
+				dep = tests.shift();
 
 			if ( dep ) {
 				require( [ dep ], loadDep );
 
 			} else {
-				QUnit.load();
+				startSuite = function() {
+					QUnit.load();
 
-				/**
-				 * Run in noConflict mode
-				 */
-				jQuery.noConflict();
+					/**
+					 * Run in noConflict mode
+					 */
+					jQuery.noConflict();
 
-				// Load the TestSwarm listener if swarmURL is in the address.
-				if ( loadSwarm ) {
-					require( [ "http://swarm.jquery.org/js/inject.js?" + (new Date()).getTime() ], function() {
+					// Load the TestSwarm listener if swarmURL is in the address.
+					if ( loadSwarm ) {
+						require( [ "http://swarm.jquery.org/js/inject.js?" + (new Date()).getTime() ], function() {
+							QUnit.start();
+						});
+					} else {
 						QUnit.start();
-					});
+					}
+				};
+
+				// QUnit registers its own window "load" handler that calls QUnit.load()
+				// (and thus QUnit.init()), which rebuilds the #qunit DOM. If that event
+				// fires after the run has started it destroys the test result elements
+				// and the run aborts, so only start the suite once "load" has fired.
+				if ( document.readyState === "complete" ) {
+					startSuite();
+				} else if ( window.addEventListener ) {
+					window.addEventListener( "load", startSuite, false );
 				} else {
-					QUnit.start();
+					window.attachEvent( "onload", startSuite );
 				}
 			}
 		})();

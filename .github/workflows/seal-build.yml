@@ -1,0 +1,108 @@
+name: seal-build
+
+# Build-and-pack only: jQuery 1.11.1's tests run on Travis (.travis.yml).
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      # The public 1.11.1 tarball was built with node 0.10-era tooling;
+      # .travis.yml also uses node 0.10.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '0.10.48'
+
+      - name: Show node and npm versions
+        run: |
+          set -euxo pipefail
+          node --version
+          npm --version
+
+      - name: Use the time-machine npm registry
+        run: |
+          set -euxo pipefail
+          # Resolve devDependencies (grunt-contrib-uglify -> uglify-js, etc.) to the
+          # versions that existed at the 1.11.1 release (2014-05-01T18:05:32.863Z), so
+          # the minifier output (dist/jquery.min.js / .min.map) stays byte-identical
+          # to the released files.
+          npm config set registry "https://:2014-05-01T18%3A05%3A32.863Z@time-machines-npm.sealsecurity.io/"
+
+      - name: Build (npm install && grunt)
+        run: |
+          set -euxo pipefail
+          # package.json "build" script: the default grunt task builds
+          # dist/jquery.js, dist/jquery.min.js and dist/jquery.min.map.
+          npm run build
+
+      - name: Create dist/cdn release copies
+        run: |
+          set -euxo pipefail
+          # Port of makeReleaseCopies() from build/release.js. That script cannot be
+          # run directly (it needs the jquery-release tool and a git release flow).
+          # 1.11.1 is not a pre-release, so every copy is generated.
+          mkdir -p dist/cdn
+          cat > "$RUNNER_TEMP/make-cdn-copies.js" <<'EOF'
+          var fs = require( "fs" ),
+                  version = JSON.parse( fs.readFileSync( "package.json", "utf8" ) ).version,
+                  devFile = "dist/jquery.js",
+                  minFile = "dist/jquery.min.js",
+                  mapFile = "dist/jquery.min.map",
+                  cdnFolder = "dist/cdn",
+                  releaseFiles = {
+            "jquery-VER.js": devFile,
+            "jquery-VER.min.js": minFile,
+            "jquery-VER.min.map": mapFile,
+            "jquery.js": devFile,
+            "jquery.min.js": minFile,
+            "jquery.min.map": mapFile,
+            "jquery-latest.js": devFile,
+            "jquery-latest.min.js": minFile,
+            "jquery-latest.min.map": mapFile
+                  };
+
+          Object.keys( releaseFiles ).forEach(function( key ) {
+                  var text,
+            builtFile = releaseFiles[ key ],
+            unpathedFile = key.replace( /VER/g, version ),
+            releaseFile = cdnFolder + "/" + unpathedFile;
+
+                  if ( /\.map$/.test( releaseFile ) ) {
+            // "file":"jquery.min.js","sources":["jquery.js"]
+            text = fs.readFileSync( builtFile, "utf8" )
+                .replace( /"file":"([^"]+)","sources":\["([^"]+)"\]/,
+                    "\"file\":\"" + unpathedFile.replace( /\.min\.map/, ".min.js" ) +
+                    "\",\"sources\":[\"" + unpathedFile.replace( /\.min\.map/, ".js" ) + "\"]" );
+            fs.writeFileSync( releaseFile, text );
+                  } else if ( /\.min\.js$/.test( releaseFile ) ) {
+            // Remove the source map comment
+            text = fs.readFileSync( builtFile, "utf8" )
+                .replace( /\/\/# sourceMappingURL=\S+/, "" );
+            fs.writeFileSync( releaseFile, text );
+                  } else if ( builtFile !== releaseFile ) {
+            fs.writeFileSync( releaseFile, fs.readFileSync( builtFile ) );
+                  }
+                  console.log( builtFile + " -> " + releaseFile );
+          });
+          EOF
+          node "$RUNNER_TEMP/make-cdn-copies.js"
+          ls -la dist dist/cdn
+
+      - name: Pack
+        run: |
+          set -euxo pipefail
+          npm pack
+          tar tzvf jquery-1.11.1.tgz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jquery-npm
+          path: jquery-1.11.1.tgz
+          if-no-files-found: error

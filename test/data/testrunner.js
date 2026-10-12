@@ -22,6 +22,44 @@ QUnit.config.testTimeout = 2e4; // 20 seconds
 QUnit.config.requireExpects = true;
 
 /**
+ * Tests that cannot pass in the automated headless browser used by CI
+ * (test/run-qunit-puppeteer.js, headless Chrome, which sets navigator.webdriver).
+ * Keyed by "<module> :: <test name>"; such tests are not registered at all and a
+ * "SKIPPED ..." line is logged to the console instead. Real browsers are unaffected.
+ *
+ * - ajax #14379: the test makes a synchronous XHR from an unload handler; modern
+ *   Chrome forbids synchronous XHR during page dismissal, so it always ends in "error".
+ * - offset fractions: Chrome's layout engine stores positions in 1/64px units, so
+ *   setting a top of 1000px over a fractional offset reads back as 999.984375.
+ */
+(function() {
+	var skipList = {
+			"ajax :: #14379 - jQuery.ajax() on unload":
+				"Chrome forbids synchronous XHR during page unload",
+			"offset :: fractions (see #7730 and #7885)":
+				"Chrome LayoutUnit 1/64px rounding (999.984375 instead of 1000)"
+		},
+		originalTest = QUnit.test;
+
+	if ( window.navigator.webdriver !== true ) {
+		return;
+	}
+
+	// asyncTest() registers through QUnit.test, so wrapping test covers both
+	window.test = QUnit.test = function( testName ) {
+		var key = ( QUnit.config.currentModule || "" ) + " :: " + testName;
+
+		if ( skipList.hasOwnProperty( key ) ) {
+			if ( window.console && window.console.log ) {
+				window.console.log( "SKIPPED " + key + " \u2014 " + skipList[ key ] );
+			}
+			return;
+		}
+		return originalTest.apply( this, arguments );
+	};
+})();
+
+/**
  * QUnit hooks
  */
 

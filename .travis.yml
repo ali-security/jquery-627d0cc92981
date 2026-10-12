@@ -1,3 +1,28 @@
 language: node_js
 node_js:
 - '0.10'
+before_script:
+# Serve the repository root so /test/index.html, /dist/* and /src/* all resolve
+# (test/jquery.js loads dist/jquery.min.js relative to the part of the URL before /test/).
+# Many workers so slow fixtures (data/name.php?wait=5, dont_return.php's 30s sleep)
+# don't block other requests — each built-in-server worker serves one request at a time;
+# PHP notices go to the server log instead of into fixture responses.
+- php --version
+- 'PHP_CLI_SERVER_WORKERS=16 php -d display_errors=stderr -S 127.0.0.1:8000 -t . > /tmp/php-server.log 2>&1 &'
+- 'for i in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1:8000/test/index.html && break; sleep 1; done'
+- 'curl -sf -o /dev/null http://127.0.0.1:8000/test/index.html'
+- 'curl -sf "http://127.0.0.1:8000/test/data/json.php?json=1"'
+# Headless Chrome runner: puppeteer (and its Chrome for Testing) on Node 20, installed
+# outside the repository so the package and its node 0.10 build are untouched.
+# `nvm install` switches the active node, so switch back to the job's node afterwards.
+- nvm install 20
+- 'mkdir -p "$HOME/qunit-runner"'
+- 'nvm exec 20 npm install --no-save --no-audit --no-fund --prefix "$HOME/qunit-runner" puppeteer@23.11.1'
+- 'nvm use "$TRAVIS_NODE_VERSION"'
+- node --version
+- npm --version
+script:
+- npm test
+- 'QUNIT_RUNNER_DIR="$HOME/qunit-runner" nvm exec 20 node test/run-qunit-puppeteer.js http://127.0.0.1:8000/test/index.html'
+after_failure:
+- 'tail -100 /tmp/php-server.log'

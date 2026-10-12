@@ -6,6 +6,7 @@
 /.jscs.json
 /.mailmap
 /.travis.yml
+/.github
 
 /build
 /speed
